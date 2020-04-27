@@ -1,0 +1,120 @@
+knitr::opts_chunk$set(cache=TRUE, eval=TRUE)
+require("caret")
+require("rpart")
+require("tidyverse")
+require("knitr")
+require("rattle")
+require("doParallel")
+set.seed(1024)
+```
+## Introduction
+
+### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal was to use data from accelerometers, and predict how well they perfor4med the excercises.
+
+## Methods
+
+### Assignment
+The goal of this project was to predict the manner in which they did the exercise. This is the "classe" variable in the training set. All the other variables could be used to predict with. 
+
+### Data
+Six Participants were asked to perform barbell lifts correctly and incorrectly in five different ways. Data was collected from accelerometers on the belt, forearm, arm, and dumbell. How well they performed the exercises was registered in one single variable, classe, our outcome variable. More information about the base dataset is available from the website here: <http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+### Data Collection, Cleaning & Partitioning
+Data was downloaded from locations <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv> (training set) and <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv> (test set). In total the training dataset contained 19622 observations on 160 variables, and the testing set 20 observations. For 19216 observations of the training set all values for 67 variables were NA. For a further 33 variables of all observations in the test set the values were NA. These were excluded. Four variables had near zero variance, these were excluded as well. A further 6 unnecessary variables were excluded, leaving a total of 52 variables to build a model with. For the purpose of cross validation the training dataset was partitioned in a training and validation set (p=.75).
+
+```{r data }
+# Download datasets
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "testing.csv")
+# Read in datasets
+training.csv <- read.csv("training.csv")
+testing.csv <- read.csv("testing.csv")
+# Remove variables with (almost) all NAs
+training.csv.old <- training.csv
+training.csv <- select(training.csv, - which(is.na(training.csv[1,])) )
+testing.csv <- select(testing.csv, - which(is.na(training.csv.old[1,])) )
+testing.csv.old <- testing.csv
+testing.csv <- select(testing.csv, - which(is.na(testing.csv[1,])) )
+# Remove variables with near zero variance
+nzv <- nearZeroVar(training.csv,saveMetrics=TRUE)
+training.csv <- training.csv[,!nzv$nzv]
+# Remove unnecessary columns
+training.csv <- select(training.csv,-X,  - user_name,-raw_timestamp_part_1,-raw_timestamp_part_2,-cvtd_timestamp,-num_window )
+testing.csv <- select(testing.csv, -X, - user_name,-raw_timestamp_part_1,-raw_timestamp_part_2,-cvtd_timestamp,-num_window,-problem_id )
+# Partitioning
+inTrain <- createDataPartition(y = training.csv$classe, p = .75, list = FALSE)
+training <- training.csv[ inTrain,]
+validation <- training.csv[-inTrain,]
+```
+
+### Models & cross validation
+Three methods were used to build three models, decision tree ('class'), stochastic gradient boosting ('gbm') and random forest ('rf'). The resulting models were cross validated with the validation set and compared on accuracy. The model with highest accuracy was chosen for the final model.
+
+```{r models}
+# Decision Tree
+fitDT <- rpart(classe ~ ., data = training, method="class")
+# Stochastic Gradient Boosting
+fitGBM <- train(classe ~ ., data = training, method = "gbm")
+# Random Forest
+fitRF <- train(classe ~ ., data = training, method = "rf")
+```
+## Results
+
+### Decision Tree
+The decision tree looks as follows.
+```{r results dt plot, warning=FALSE}
+fancyRpartPlot(fitDT, main="Decision Tree", sub="")
+```
+And the confusion matrix as follows.
+```{r results dt matrix, warning=FALSE}
+predictionDT <- predict(fitDT, validation, type = "class")
+confusionMatrix(predictionDT, validation$classe)
+```
+### Stochastic Gradient Boosting
+The confusion matrix for the Stochastic Gradient Boosting model is as follows.
+```{r results GBM matrix, warning=FALSE}
+predictionGBM <- predict(fitGBM, validation)
+confusionMatrix(predictionGBM, validation$classe)
+```
+### Random Forest
+The confusion matrix for the random forest model is as follows.
+```{r results RF matrix, warning=FALSE}
+predictionRF <- predict(fitRF, validation)
+confusionMatrix(predictionRF, validation$classe)
+```
+### Combination of the models
+A combination of the three models resulted in the following confusion matrix.
+```{r results combination, warning=FALSE}
+predDF <- data.frame(predictionDT, predictionGBM, predictionRF, validation$classe)
+combModFit <- train(validation.classe ~ ., method = "rf", data = predDF)
+combPred <- predict(combModFit, predDF)
+confusionMatrix(combPred, validation$classe)
+```
+### Comparison of the models
+The accuracy of the models was as follows:
+```{r results comparison, warning=FALSE}
+paste("Decision Tree:                  ",confusionMatrix(predictionDT, validation$classe)$overall[[1]],sep="")
+paste("Stochastic Gradient Boosting:   ",confusionMatrix(predictionGBM, validation$classe)$overall[[1]],sep="")
+paste("Random Forest:                  ",confusionMatrix(predictionRF, validation$classe)$overall[[1]],sep="")
+paste("Combination of three models:    ",confusionMatrix(combPred, validation$classe)$overall[[1]],sep="")
+```
+Of the three models random forest has the highest accuracy. Combining the three models does not improve accuracy. The model used for the test set was therefore random forest.
+
+### Predicting the test set
+The prediction classe of the 20 test cases was as follows:
+```{r results write files, warning=FALSE}
+predictionRF <- predict(fitRF, testing.csv)
+predictionRF
+writeFiles = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+writeFiles(predictionRF)
+```
+
+## Discussion & Conclusion
+The accuracy of the random forest model is very high, about 99%. This matches the outcome of the prediction of the test set, as these were all correctly classified.
